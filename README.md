@@ -8,7 +8,7 @@ El objetivo es procesar y depurar registros de entregas de producto provenientes
 El flujo se diseñó para operar en entornos **develop / qa / main**, y genera salidas **particionadas por `fecha_proceso`** bajo una estructura estandarizada en formato **Delta Lake**.
 
 ---
-
+ 
 ## Objetivos
 
 El pipeline cumple con los siguientes requerimientos definidos en la prueba técnica:
