@@ -1,0 +1,37 @@
+name: Update Databricks Notebook on dev→main
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+jobs:
+  update-notebook:
+    # corre solo si el PR fue MERGED y venía de dev → main
+    if: github.event.pull_request.merged == true && github.event.pull_request.base.ref == 'main' && github.event.pull_request.head.ref == 'dev'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Databricks CLI
+        uses: databricks/setup-cli@v1
+
+      - name: Configure env
+        env:
+          DATABRICKS_HOST_DEVELOP: ${{ secrets.DATABRICKS_HOST_DEVELOP }}
+          DATABRICKS_TOKEN_DEVELOP: ${{ secrets.DATABRICKS_TOKEN_DEVELOP }}
+        run: |
+          echo "DATABRICKS_HOST=${DATABRICKS_HOST_DEVELOP}" >> $GITHUB_ENV
+          echo "DATABRICKS_TOKEN=${DATABRICKS_TOKEN_DEVELOP}" >> $GITHUB_ENV
+
+      - name: Import notebook (overwrite)
+        run: |
+          databricks workspace import \
+            --format=SOURCE \
+            --language=PYTHON \
+            --overwrite \
+            notebooks/ETL_Entregas_Base.py \
+            "/Users/romarioparedest@outlook.com/DEV-GLOBAL-MOBILITY/ETL_Entregas_Base.py"
+
