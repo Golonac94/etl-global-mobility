@@ -1,0 +1,18 @@
+env: develop   # posiblemente luego cambie el enfoque
+
+paths:
+  raw_csv: "/Volumes/workspace/global_mobility/raw/global_mobility_data_entrega_productos.csv"
+  output_root: "/Volumes/workspace/global_mobility/data/processed"   
+
+params:    #PARAMETROS EDICION
+  start_date: "2025-01-01"        
+  end_date:   "2025-06-30"
+  country:    "PE"              
+
+delivery_types:
+    routine: ["ZPRE", "ZVE1"]
+    bonus:   ["Z04", "Z05"]
+
+unit_factors:
+  "CS": 20
+  "ST": 1
