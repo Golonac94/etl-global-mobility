@@ -7,7 +7,6 @@ on:
 
 jobs:
   update-notebook:
-    # Solo si el PR fue MERGED y venía de dev → main
     if: github.event.pull_request.merged == true && github.event.pull_request.base.ref == 'main' && github.event.pull_request.head.ref == 'dev'
     runs-on: ubuntu-latest
 
@@ -16,7 +15,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Setup Databricks CLI
-        uses: databricks/setup-cli@v1
+        uses: databricks/setup-cli@main
 
       - name: Configure env
         env:
@@ -25,6 +24,7 @@ jobs:
         run: |
           echo "DATABRICKS_HOST=${DATABRICKS_HOST_DEVELOP}" >> $GITHUB_ENV
           echo "DATABRICKS_TOKEN=${DATABRICKS_TOKEN_DEVELOP}" >> $GITHUB_ENV
+          databricks --version
 
       - name: Import notebook (overwrite, JUPYTER → PROD folder)
         run: |
@@ -33,4 +33,5 @@ jobs:
             --overwrite \
             notebooks/ETL_Entregas_Base.ipynb \
             "/Users/romarioparedest@outlook.com/PROD-GLOBAL-MOBILITY/ETL_Entregas_Base.ipynb"
+
 
