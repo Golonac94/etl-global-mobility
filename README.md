@@ -17,7 +17,7 @@ El pipeline cumple con los siguientes requerimientos definidos en la prueba téc
  
 | Requisito | Cumplimiento |
 |------------|---------------|
-| 1. Lectura del CSV fuente | `paths.raw_csv` en `config.yaml` (lectura con esquema + parseo de fechas) |
+| 1. Lectura del CSV fuente  | `paths.raw_csv` en `config.yaml` (lectura con esquema + parseo de fechas) |
 | 2. Filtrado dinámico por rango de fechas | `start_date` y `end_date` parametrizados en `config.yaml` (`between(to_date(...))`) |
 | 3. Salidas particionadas por `fec_proceso` | Tablas `UDV.data_ventas_depurado` y `UDV.data_ventas_obs`, partición `fec_proceso (DATE)` y `replaceWhere` por país + rango |
 | 4. Parametrización con OmegaConf | Se usa OmegaConf para rutas, `params`, `delivery_types` y `unit_factors` (incluye `to_container` para `DictConfig`) |
