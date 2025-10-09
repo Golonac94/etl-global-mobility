@@ -14,7 +14,7 @@ El objetivo técnico es cumplir con la **prueba de flujo de datos** establecida,
 ## Objetivos
 
 El pipeline cumple con los siguientes requerimientos definidos en la prueba técnica:
-
+ 
 | Requisito | Cumplimiento |
 |------------|---------------|
 | 1. Lectura del CSV fuente | `paths.raw_csv` en `config.yaml` (lectura con esquema + parseo de fechas) |
