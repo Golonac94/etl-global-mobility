@@ -64,13 +64,6 @@ El pipeline cumple con los siguientes requerimientos definidos en la prueba téc
                     └──────────────────────────────────────┘
                                       │
                                       ▼
-                          ┌────────────────────────┐
-                          │       Filtrado         │
-                          │ country / fechas /     │
-                          │ columnas requeridas    │
-                          └──────────┬─────────────┘
-                                      │
-                                      ▼
                   ┌─────────────────────────────────────────┐
                   │     Control de Calidad (UDV)            │
                   │ - Split válidos vs observados           │
