@@ -1,144 +1,231 @@
-#  ETL de Entregas de Producto — Prueba Técnica (Grupo Mariposa)
+#  ETL de Entregas de Producto — Prueba Técnica
 
 ##  Descripción General
 
-Este proyecto implementa un **flujo ETL parametrizable en PySpark**, desarrollado como parte de una **prueba técnica de ingeniería de datos**.  
-El objetivo es procesar y depurar registros de entregas de producto provenientes de distintos países, utilizando una arquitectura flexible controlada mediante **OmegaConf (YAML)** para definir parámetros como fechas, país y rutas de salida.
+Este proyecto implementa un **pipeline ETL automatizado en PySpark**, diseñado para procesar, limpiar y estandarizar registros de entregas de productos provenientes de distintos países.  
+El flujo está **controlado mediante un archivo de configuración YAML (OmegaConf)** y **automatizado con GitHub Actions** para desplegar el notebook actualizado en **Databricks Community**, bajo una estructura de carpetas por ambiente (`DEV-GLOBAL-MOBILITY`, `PROD-GLOBAL-MOBILITY`).
 
-El flujo se diseñó para operar en entornos **develop / qa / main**, y genera salidas **particionadas por `fecha_proceso`** bajo una estructura estandarizada en formato **Delta Lake**.
-
+El objetivo técnico es cumplir con la **prueba de flujo de datos** establecida, asegurando:
+- Control total de parámetros (fechas, país, tipo de entrega, unidades).
+- Ejecución modular y trazable (logging estructurado).
+- Output estandarizado y auditado en formato **Delta Lake**.
 ---
  
 ## Objetivos
 
 El pipeline cumple con los siguientes requerimientos definidos en la prueba técnica:
 
-1. Lectura de archivo CSV fuente.  
-2. Filtrado por **rango de fechas dinámico** (`start_date`, `end_date`) usando OmegaConf.  
-3. Escritura de salidas **particionadas por `fecha_proceso`** en `data/processed/${fecha_proceso}`.  
-4. Parametrización por país (`country`).  
-5. Estandarización de unidades (`CS` → 20 `ST`).  
-6. Identificación de entregas:
-   - `ZPRE`, `ZVE1` → entregas de rutina.  
-   - `Z04`, `Z05` → entregas con bonificación.  
-7. Filtrado de registros no válidos y generación de tabla de observaciones.  
-8. Estandarización de nombres de columnas bajo convención `snake_case`.  
-9. Detección y eliminación de anomalías.  
-10. Columnas adicionales fundamentadas:
-    - `precio_unitario_unidades`
-    - `ind_rutina`
-    - `ind_bonificacion`
+| Requisito | Cumplimiento |
+|------------|---------------|
+| 1. Lectura del CSV fuente | `paths.raw_csv` en `config.yaml` (lectura con esquema + parseo de fechas) |
+| 2. Filtrado dinámico por rango de fechas | `start_date` y `end_date` parametrizados en `config.yaml` (`between(to_date(...))`) |
+| 3. Salidas particionadas por `fec_proceso` | Tablas `UDV.data_ventas_depurado` y `UDV.data_ventas_obs`, partición `fec_proceso (DATE)` y `replaceWhere` por país + rango |
+| 4. Parametrización con OmegaConf | Se usa OmegaConf para rutas, `params`, `delivery_types` y `unit_factors` (incluye `to_container` para `DictConfig`) |
+| 5. Rango de fecha y país único por corrida | Desde OmegaConf se seleccionan `country`, `start_date`, `end_date`; soporta múltiples países y controla reproceso con `proccess: YES/NO` |
+| 6. Conversión de unidades (`CS → 20 ST`) | `factor_map` desde `unit_factors` de `config.yaml` (conversión a unidad estándar *ST* y cálculo de `cant_unidad_medida`) |
+| 7. Identificación de tipo de entrega | `ind_rutina` y `ind_bonificacion` según `delivery_types` en `config.yaml` (excluyendo otros en depurado) |
+| 8. Estandarización de nombres (snake_case) | Nombres normalizados y prefijos coherentes (`cod_*`, `fec_*`) |
+| 9. Control de calidad y observaciones | Split en `data_ventas_depurado` / `data_ventas_obs` con `motivo_obs`; logging en `/Volumes/.../etl_run_YYYYMMDD_HHMMSS.log` |
+| 10. Columnas adicionales | `precio_unitario_unidades`, `cant_unidad_medida`, `origen_datos`, `fec_actualizacion_registro`, indicadores `ind_*` (según documento) |
+| 11. Documentar flujo | README actual (este documento) |
+
 
 ---
+##  Arquitectura Técnica del ETL
 
-## ⚙️ Arquitectura General del Flujo
 
-<!-- TODO: Inserta aquí un diagrama tipo "data flow" mostrando las etapas:
-CSV → Bronze (lectura y limpieza básica) → Silver (transformaciones / unidad estandarizada / flags) → Gold (salida particionada por fecha_proceso)
-Usa draw.io o mermaid y guarda como `docs/etl_diagram.png` -->
-
-**Etapas principales:**
-
-1. **Lectura:**  
-   Se lee el dataset CSV desde la ruta indicada en `config.yaml` (`paths.raw_csv`).
-
-2. **Filtrado:**  
-   Aplicación dinámica de filtros por país y rango de fechas definidos en `params`.
-
-3. **Transformación:**  
-   - Conversión de unidades (`CS → ST * 20`).  
-   - Generación de columnas `ind_rutina`, `ind_bonificacion`.  
-   - Cálculo de `precio_unitario_unidades = mto_venta / cantidad_en_unidades`.  
-   - Normalización de columnas (`snake_case`, trim, upper/lower según tipo).
-
-4. **Control de Calidad:**  
-   - Se generan dos DataFrames:
-     - `data_ventas_depurado`: registros válidos.  
-     - `data_ventas_obs`: registros descartados con motivo de observación.  
-   - Ambas tablas se guardan en formato **Delta**, particionadas por `fec_proceso`.
-
-5. **Escritura:**  
-   Los resultados se guardan en:
-   ```
-   data/processed/{fecha_proceso}/data_ventas_depurado
-   data/processed/{fecha_proceso}/data_ventas_obs
-   ```
-
----
-
-## 🧾 Configuración (OmegaConf)
-
-El archivo `config/config.yaml` define todos los parámetros del flujo, la conversion unidades y los tipos de delivery validos  :
-
-```yaml
-
-paths:
-  raw_csv: "/Volumes/workspace/global_mobility/data/raw/global_mobility_data_entrega_productos.csv"
-  output_root: "/Volumes/workspace/global_mobility/data/processed"   
-
-params:    #PARAMETROS EDICION
-  start_date: "2025-01-01"        
-  end_date:   "2025-06-30"
-  country:    "PE"              
-
-delivery_types:
-    routine: ["ZPRE", "ZVE1"]
-    bonus:   ["Z04", "Z05"]
-
-unit_factors:
-  "CS": 20
-  "ST": 1
+```
+                       ┌──────────────────────────────┐
+                       │      config/config.yaml      │
+                       │  Parámetros globales del ETL │
+                       │  (paths, params, factors...) │
+                       └──────────────┬───────────────┘
+                                      │
+                                      ▼
+                          ┌────────────────────────┐
+                          │      Lectura CSV       │
+                          │ Validación y tipado    │
+                          │ (raw_csv → DataFrame)  │
+                          └──────────┬─────────────┘
+                                      │
+                                      ▼
+                          ┌─────────────────────────┐
+                          │       Filtrado          │
+                          │ country / fechas /      │
+                          │ columnas requeridas     │
+                          └───────────┬─────────────┘
+                                      │
+                                      ▼
+                    ┌──────────────────────────────────────┐
+                    │ Transformación (UDV - Silver Layer)  │
+                    │ - Conversión unidades (factor_map)   │
+                    │ - Indicadores rutina/bonif           │
+                    │ - Cálculo precio_unitario_unidades   │
+                    └──────────────────────────────────────┘
+                                      │
+                                      ▼
+                          ┌────────────────────────┐
+                          │       Filtrado         │
+                          │ country / fechas /     │
+                          │ columnas requeridas    │
+                          └──────────┬─────────────┘
+                                      │
+                                      ▼
+                  ┌─────────────────────────────────────────┐
+                  │     Control de Calidad (UDV)            │
+                  │ - Split válidos vs observados           │
+                  │ - Log info / errores                    │
+                  └───────────────┬─────────────────────────┘
+                                  │
+                 ┌────────────────┼─────────────────┐
+                 │                                  │
+                 ▼                                  ▼
+  ┌─────────────────────────────┐     ┌─────────────────────────────┐
+  │ UDV.data_ventas_depurado    │     │ UDV.data_ventas_obs         │
+  │ (Registros válidos)         │     │ (Observaciones / errores)   │
+  └──────────────┬──────────────┘     └─────────────────────────────┘
+                 │                                   
+                 |
+                 ▼
+ ┌──────────────────────────────────┐
+ │   /Volumes/workspace/.../data/   │
+ │   processed/ (Delta Outputs)     │
+ │   Partición: fec_proceso (DATE)  │
+ └──────────────────────────────────┘
 
 ```
 
-El flujo puede ejecutarse para cualquier rango de fechas y país sin modificar el código.
+---
+
+##  Configuración con OmegaConf
+
+Archivo: **`config/config.yaml`**
+
+```yaml
+paths:
+  raw_csv: /Volumes/workspace/global_mobility/data/raw/global_mobility_data_entrega_productos.csv
+  output_root: /Volumes/workspace/global_mobility/data/processed
+
+params:
+  - country: PE
+    start_date: '2025-01-01'
+    end_date: '2025-06-30'
+    proccess: 'NO'
+
+delivery_types:
+  routine:
+    - ZPRE
+    - ZVE1
+  bonus:
+    - Z04
+    - Z05
+
+unit_factors:
+  CS: 20
+  ST: 1
+```
+
+###  Validaciones incluidas:
+- Logging detallado de validación (errores e info).
+
+
+  <img src='https://casaromo.duckdns.org/apps/files_sharing/publicpreview/5HMeHGqEnNfQSAY?file=/log.png&fileId=348824&x=2560&y=1440&a=true&etag=e8921e3e05b6309000613d311dd245f5' width='600'>
+
+- Validación completa del archivo config.yaml
+  -Estructura completa de secciones (`paths`, `params`, `delivery_types`, `unit_factors`).
+  - Tipos de dato correctos (`params` es lista, fechas en formato ISO).
+  - `unit_factors` convertido con `OmegaConf.to_container` para aceptar `DictConfig`.
+  - Control de  valores nulos o negativos y registro en la tabla de obs.
+
+  <img src='https://casaromo.duckdns.org/apps/files_sharing/publicpreview/5HMeHGqEnNfQSAY?file=/config_validacion.png&fileId=348834&x=2560&y=1440&a=true&etag=d1eda172ad22a49569f9813f4b2f96b6' width='600'>
+
+- Validación de data 
+  -Toda la data con observación se guarda como STRING en la tabla data_ventas_obs.
+
+    <img src='https://casaromo.duckdns.org/apps/files_sharing/publicpreview/5HMeHGqEnNfQSAY?file=/tabla_obs.png&fileId=348844&x=2560&y=1440&a=true&etag=5c7d760a2c62d39446dfc5b1c84ff555' width='600'>
+
+  - Materiales vacios (`null`). **- Detectada**
+  - Registros sin tipo de entrega valida. **- Detectada**
+  - Registros sin conversión de unidades valida.
+  - Control de  valores nulos o negativos en cantidad y precio de obs. **- Detectada**
+
+    <img src='https://casaromo.duckdns.org/apps/files_sharing/publicpreview/5HMeHGqEnNfQSAY?file=/errores.png&fileId=348843&x=2560&y=1440&a=true&etag=3445c30ed9e21a01de70a633a0c7a254' width='600'>
+
 
 ---
 
-## Principales Transformaciones
 
-| Columna origen | Regla aplicada | Columna resultante | Obsevación |
-|----------------|----------------|--------------------|--------------------|
-| `unidad` | CS = 20 ST, ST = 1 | `cant_unidad_medida` | Cualquier otro valor da `null` y se guarda en obs |
-| `mto_venta` / `cant_unidad_medida` | Precio unitario redondeado a 3 decimales | `precio_unitario_unidades` | Cantidad igual 0 dara `null` y se guarda en obs |
-| `tipo_entrega` | Listado de config.yml | `ind_rutina`, `ind_bonificacion` |Cantidad igual 0 dara `null` y se guarda en obs |
-| — | Anomalías detectadas | `motivo_obs` (en tabla observaciones) |
+##  Control de Calidad y Logs
 
----
-
-## 🧪 Validaciones y Observaciones
-
-- Se crean **dos salidas**:
-  - `data_ventas_depurado`: registros válidos.
-  - `data_ventas_obs`: registros descartados con detalle del motivo.
-
-- Ejemplo de escritura:
-  ```python
-  df_clean.write.format("delta").mode("overwrite").partitionBy("fec_proceso").save(out_path)
-  df_obs.write.format("delta").mode("overwrite").partitionBy("fec_proceso").save(obs_path)
+- Se genera un archivo log en cada ejecución:
   ```
+  /Volumes/workspace/global_mobility/log/etl_run_YYYYMMDD_HHMMSS.log
+  ```
+- Cada etapa  registra:
+  - info de ok.
+  - errores con mensajes legibles (`log_error`).
 
-<!-- TODO: agrega una captura de pantalla del resultado en Databricks mostrando las particiones o vista Delta -->
+  <img src='https://casaromo.duckdns.org/apps/files_sharing/publicpreview/5HMeHGqEnNfQSAY?file=/log_data.png&fileId=348859&x=2560&y=1440&a=true&etag=367a08e8066e302ffbb0cfe68a1842d7' width='600'>
+
 
 ---
 
-## 🧠 Estándar de Columnas Finales
+##  Salidas
 
-| Campo | Tipo | Descripción |
-|--------|------|-------------|
-| `cod_pais` | STRING | Código ISO del país |
-| `fec_proceso` | DATE | Fecha de procesamiento (partición) |
-| `cod_transporte` | STRING | Identificador del transporte |
-| `cod_ruta` | STRING | Código de ruta |
-| `cod_tipo_entrega` | STRING | Tipo de entrega (ZPRE, Z04, etc.) |
-| `cod_material` | STRING | Material entregado |
-| `mto_venta` | DECIMAL | Monto de venta |
-| `cant_unidad_medida` | DECIMAL | Cantidad estandarizada (ST) |
-| `cod_unidad_medida` | STRING | Unidad estandarizada (ST) |
-| `precio_unitario_unidades` | DECIMAL(21,3) | Precio por unidad estándar |
-| `ind_rutina` | INT | 1 = rutina, 0 = no |
-| `ind_bonificacion` | INT | 1 = bonificación, 0 = no |
-| `origen_datos` | STRING | Archivo o fuente original |
-| `fec_actualizacion_registro` | STRING | Fecha de última actualización |
+| Tabla | Descripción | Partición |
+|--------|--------------|-----------|
+| `RDV.data_ventas` | Carga inicial con los filtros basicos | `fec_proceso (DATE)` | 
+| `UDV.data_ventas_depurado` | Registros válidos depurados | `fec_proceso (DATE)` | 
+| `UDV.data_ventas_obs` | Registros descartados con `motivo_obs` | `fec_proceso (DATE)` | 
+| `/Volumes/workspace/global_mobility/data/processed/` | Registros válidos depurados según solicitud | `fec_proceso (DATE)` | 
 
+
+
+  <img src='https://casaromo.duckdns.org/apps/files_sharing/publicpreview/5HMeHGqEnNfQSAY?file=/tablas_finales.png&fileId=348866&x=2560&y=1440&a=true&etag=0c15cbf514b0c92237eb521d104a0308' width='600'>
+
+  <img src='https://casaromo.duckdns.org/apps/files_sharing/publicpreview/5HMeHGqEnNfQSAY?file=/data_carpeta.png&fileId=348867&x=2560&y=1440&a=true&etag=f0cd1ce67bfa2ec2f35778c3296e7601' width='600'>
+
+---
+
+## 🚀 Automatización CI/CD (GitHub → Databricks)
+
+El notebook se despliega automáticamente a la carpeta **`/Users/romarioparedest@outlook.com/PROD-GLOBAL-MOBILITY/notebooks/`** cada vez que se hace **merge de `dev` → `main`** en GitHub.
+
+Workflow: `.github/workflows/update-notebook-on-main.yml`
+- Usa los secretos:
+  - `DATABRICKS_HOST_DEVELOP` 
+  - `DATABRICKS_TOKEN_DEVELOP`
+
+Esto garantiza que la versión en **PROD** siempre refleje el último merge aprobado en GitHub.
+
+  <img src='https://casaromo.duckdns.org/apps/files_sharing/publicpreview/5HMeHGqEnNfQSAY?file=/workflow.png&fileId=348882&x=2560&y=1440&a=true&etag=bd37baaa4521ca9b5787325e4a77edd1' width='650'>
+
+
+---
+
+##  Columnas finales del dataset depurado
+
+| Campo | Tipo | Descripción |Motivo creación|
+|--------|------|-------------|-------------|
+| `cod_pais` | STRING | País ISO-2 | Inicial |
+| `fec_proceso` | DATE | Fecha proceso (partición) |Inicial |
+| `cod_transporte` | STRING | Transporte |Inicial |
+| `cod_ruta` | STRING | Ruta de entrega |Inicial |
+| `cod_tipo_entrega` | STRING | Tipo entrega (`ZPRE`, `ZVE1`, etc.) |Inicial |
+| `cod_material` | STRING | Material entregado |Inicial |
+| `precio_unitario_unidades` | DECIMAL | Precio por unidad | Campo para poder evaluar precio por rango de fecha/envio |
+| `mto_venta` | DECIMAL | Monto venta |Inicial |
+| `cant_uni_medida` | DECIMAL | Cantidad según el cod_uni_medida |Inicial |
+| `cod_uni_medida` | STRING | Unidad de medida |Inicial |
+| `cant_unidades` | DECIMAL | Cantidad en unidades |Solicitud del test |
+| `ind_rutina` | BOOLEAN | true si rutina, false caso contrario |Solicitud del test |
+| `ind_bonificacion` | BOOLEAN | true si bonificación, false caso contrario |Solicitud del test |
+| `origen_datos` | STRING |Archivo origen de datos |Campo para tracking  |
+| `fec_actualizacion_registro` | DATE |Fecha de migracion de datos| Campo para tracking |
+
+Campo adicional en data_ventas_obs
+
+| Campo | Tipo | Descripción |Motivo creación|
+|--------|------|-------------|-------------|
+| `motivo_obs` | STRING | Motivo de depuración | Poder trackear el motivo de la separación de la data y poder corregir origen o considerar la depuración como regla de negocio|
 ---
